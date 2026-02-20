@@ -27,6 +27,82 @@ export default function Admin() {
   const [descripcion, setDescripcion] = useState("");
   const [productos, setProductos] = useState([]);
   const [loadingProductos, setLoadingProductos] = useState(false);
+  const [editandoProducto, setEditandoProducto] = useState(null);
+  const [editForm, setEditForm] = useState({ nombre: '', categoria: '', precio: '', descripcion: '', imagen: '' });
+  // Manejar cambios en el formulario de edición
+  const handleEditChange = (e) => {
+    const { name, value } = e.target;
+    setEditForm(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Manejar cambio de imagen en edición
+  const handleEditImage = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEditForm(prev => ({ ...prev, imagen: reader.result, nuevaImagen: file }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Abrir formulario de edición con datos actuales
+  const handleEdit = (producto) => {
+    setEditandoProducto(producto.id);
+    setEditForm({
+      nombre: producto.nombre,
+      categoria: producto.categoria,
+      precio: producto.precio,
+      descripcion: producto.descripcion || '',
+      imagen: producto.imagen,
+      nuevaImagen: null
+    });
+  };
+
+  // Guardar cambios en Supabase
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    let imagenUrl = editForm.imagen;
+    // Si hay nueva imagen, subirla a ImgBB
+    if (editForm.nuevaImagen) {
+      const formData = new FormData();
+      formData.append('image', editForm.nuevaImagen);
+      formData.append('key', IMGBB_API_KEY);
+      const res = await fetch('https://api.imgbb.com/1/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        imagenUrl = data.data.url;
+      }
+    }
+    // Actualizar en Supabase
+    const { error } = await supabase
+      .from('productos')
+      .update({
+        nombre: editForm.nombre,
+        categoria: editForm.categoria,
+        precio: parseFloat(editForm.precio),
+        descripcion: editForm.descripcion,
+        imagen: imagenUrl
+      })
+      .eq('id', editandoProducto);
+    if (!error) {
+      setProductos(productos.map(p => p.id === editandoProducto ? { ...p, ...editForm, imagen: imagenUrl } : p));
+      setEditandoProducto(null);
+      setUploadMsg('Producto actualizado');
+      setTimeout(() => setUploadMsg(''), 2000);
+    } else {
+      setUploadMsg('Error al actualizar');
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditandoProducto(null);
+    setEditForm({ nombre: '', categoria: '', precio: '', descripcion: '', imagen: '', nuevaImagen: null });
+  };
 
   // Cargar productos en tiempo real al iniciar sesión
   React.useEffect(() => {
@@ -241,9 +317,12 @@ export default function Admin() {
 
   const handleDelete = async (producto) => {
     if (!confirm(`¿Eliminar ${producto.nombre}?`)) return;
-    
     try {
-      await deleteDoc(doc(db, "productos", producto.id));
+      const { error } = await supabase
+        .from('productos')
+        .delete()
+        .eq('id', producto.id);
+      if (error) throw error;
       setProductos(productos.filter(p => p.id !== producto.id));
       setUploadMsg("Producto eliminado");
       setTimeout(() => setUploadMsg(""), 2000);
@@ -525,22 +604,94 @@ export default function Admin() {
               <div className="admin-products-grid">
                 {productos.map(producto => (
                   <div key={producto.id} className="admin-product-card">
-                    <img 
-                      src={producto.imagen} 
-                      alt={producto.nombre} 
-                      className="admin-product-img"
-                    />
-                    <div className="admin-product-info">
-                      <h4 className="admin-product-name">{producto.nombre}</h4>
-                      <p className="admin-product-category">{producto.categoria}</p>
-                      <p className="admin-product-price">${producto.precio?.toFixed(2)}</p>
-                    </div>
-                    <button 
-                      className="admin-delete-btn"
-                      onClick={() => handleDelete(producto)}
-                    >
-                      Eliminar
-                    </button>
+                    {editandoProducto === producto.id ? (
+                      <form className="admin-edit-form" onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12, background: '#fff', borderRadius: 16, padding: 24, boxShadow: '0 2px 16px #0002', minWidth: 320 }}>
+                        <label style={{ fontWeight: 600, marginBottom: 4 }}>Nombre
+                          <input
+                            type="text"
+                            name="nombre"
+                            value={editForm.nombre}
+                            onChange={handleEditChange}
+                            placeholder="Nombre"
+                            required
+                            style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid #ccc', marginTop: 2 }}
+                          />
+                        </label>
+                        <label style={{ fontWeight: 600, marginBottom: 4 }}>Categoría
+                          <input
+                            type="text"
+                            name="categoria"
+                            value={editForm.categoria}
+                            onChange={handleEditChange}
+                            placeholder="Categoría"
+                            required
+                            style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid #ccc', marginTop: 2 }}
+                          />
+                        </label>
+                        <label style={{ fontWeight: 600, marginBottom: 4 }}>Precio
+                          <input
+                            type="number"
+                            name="precio"
+                            value={editForm.precio}
+                            onChange={handleEditChange}
+                            placeholder="Precio"
+                            required
+                            min="0"
+                            step="0.01"
+                            style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid #ccc', marginTop: 2 }}
+                          />
+                        </label>
+                        <label style={{ fontWeight: 600, marginBottom: 4 }}>Descripción
+                          <textarea
+                            name="descripcion"
+                            value={editForm.descripcion}
+                            onChange={handleEditChange}
+                            placeholder="Descripción"
+                            rows={3}
+                            style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid #ccc', marginTop: 2, resize: 'vertical' }}
+                          />
+                        </label>
+                        <label style={{ fontWeight: 600, marginBottom: 4 }}>Imagen
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleEditImage}
+                            style={{ marginTop: 2 }}
+                          />
+                        </label>
+                        {editForm.imagen && (
+                          <img src={editForm.imagen} alt="preview" style={{ width: 120, margin: '10px auto', borderRadius: 8, boxShadow: '0 1px 6px #0001' }} />
+                        )}
+                        <button type="submit" className="admin-btn" style={{ fontSize: 20, marginTop: 10, width: '100%' }}>Guardar</button>
+                        <button type="button" className="admin-delete-btn" style={{ fontSize: 18, width: '100%' }} onClick={handleCancelEdit}>Cancelar</button>
+                      </form>
+                    ) : (
+                      <>
+                        <img 
+                          src={producto.imagen} 
+                          alt={producto.nombre} 
+                          className="admin-product-img"
+                        />
+                        <div className="admin-product-info">
+                          <h4 className="admin-product-name">{producto.nombre}</h4>
+                          <p className="admin-product-category">{producto.categoria}</p>
+                          <p className="admin-product-price">${producto.precio?.toFixed(2)}</p>
+                        </div>
+                        <button 
+                          className="admin-btn"
+                          style={{ marginRight: 8 }}
+                          onClick={() => handleEdit(producto)}
+                        >
+                          Editar
+                        </button>
+                        <button 
+                          className="admin-delete-btn"
+                          onClick={() => handleDelete(producto)}
+                        >
+                          Eliminar
+                        </button>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
